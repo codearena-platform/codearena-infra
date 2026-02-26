@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: competition
+  namespace: codearena
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: competition
+  template:
+    metadata:
+      labels:
+        app: competition
+    spec:
+      containers:
+        - name: competition
+          image: codearena-competition:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 7001
+            - containerPort: 50052
+          env:
+            - name: PORT
+              value: "7001"
+            - name: DATABASE_URL
+              # Resolves using K8s postgresql service from helm chart
+              value: "postgres://postgres:password@postgres-postgresql:5432/competition?sslmode=disable" 
+            - name: MONGO_URI
+              value: "mongodb://mongo:27017"
+            - name: KAFKA_ADDR
+              value: "kafka:9092"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: competition
+  namespace: codearena
+spec:
+  selector:
+    app: competition
+  ports:
+    - name: http
+      protocol: TCP
+      port: 7001
+      targetPort: 7001
+    - name: grpc
+      protocol: TCP
+      port: 50052
+      targetPort: 50052
+  type: ClusterIP

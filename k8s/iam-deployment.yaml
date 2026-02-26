@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iam
+  namespace: codearena
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: iam
+  template:
+    metadata:
+      labels:
+        app: iam
+    spec:
+      containers:
+        - name: iam
+          image: codearena-iam:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 7000
+          env:
+            - name: PORT
+              value: "7000"
+            - name: DB_URI
+              value: "mongodb://mongo:27017" # Resolves using K8s service "mongo" from helm chart
+            - name: REDIS_ADDR
+              value: "redis-master:6379" # Resolves using K8s redis service
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: iam
+  namespace: codearena
+spec:
+  selector:
+    app: iam
+  ports:
+    - protocol: TCP
+      port: 7000
+      targetPort: 7000
+  type: ClusterIP
