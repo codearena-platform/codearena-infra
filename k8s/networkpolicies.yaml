@@ -253,6 +253,9 @@ spec:
         - podSelector:
             matchLabels:
               app: backup
+        - podSelector:
+            matchLabels:
+              app: migrations
       ports:
         - protocol: TCP
           port: 5432
@@ -290,6 +293,9 @@ spec:
         - podSelector:
             matchLabels:
               app: backup
+        - podSelector:
+            matchLabels:
+              app: migrations
       ports:
         - protocol: TCP
           port: 27017
@@ -378,3 +384,32 @@ spec:
           port: 443
         - protocol: TCP
           port: 6443
+---
+# The migration Job needs both datastores. It does not call the Kubernetes API
+# or any external service.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-migrations-egress
+  namespace: codearena
+spec:
+  podSelector:
+    matchLabels:
+      app: migrations
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mongodb
+      ports:
+        - protocol: TCP
+          port: 27017
