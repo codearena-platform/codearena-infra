@@ -117,9 +117,16 @@ only) and on every push to `main`/`v*` tag (build and push to GHCR):
 
 Every push also gets an immutable `sha-<commit>` tag; version tags additionally
 get the version and `latest`. After a successful push the workflow records the
-resulting digests in `k8s/images.env` and opens (or refreshes) a PR. Merge that
-PR to make the new digests the deployment default. The checked-in bootstrap
-digests are all zeroes until the first workflow run; they are not deployable.
+resulting digests in `k8s/images.env` and pushes them to the
+`chore/update-image-digests` branch. This organization disables "Allow GitHub
+Actions to create and approve pull requests", so a maintainer must open (or
+refresh) the PR manually from
+[the compare page](https://github.com/codearena-platform/codearena-infra/compare/main...chore/update-image-digests)
+with the title `chore: update service image digests`. The workflow writes that
+link to the run summary whenever the branch changes, and says when the digests
+are already current. Merge the PR to make the new digests the deployment
+default. The checked-in bootstrap digests are all zeroes until the first
+workflow run; they are not deployable.
 
 Source manifests reference `${GATEWAY_IMAGE}`, `${IAM_IMAGE}`,
 `${COMPETITION_IMAGE}` and `${CORE_IMAGE}`. `make k8s-render` writes resolved
@@ -321,6 +328,6 @@ Helm chart versions are pinned, persistence is enabled, and all datastore Servic
 ## Remaining work
 
 - Provision the S3 bucket, KMS key and DynamoDB lock table referenced by `terraform/backend.hcl.example` and grant the Terraform role access. The encrypted backend configuration is included; the cloud resources are environment-specific.
-- Merge the first automated image digest PR so the bootstrap zero digests in `k8s/images.env` are replaced with real, deployable digests.
+- Enable "Allow GitHub Actions to create and approve pull requests" at the organization level, then restore automatic PR creation in `.github/workflows/images.yml` and remove the manual step from [Images and promotion](#images-and-promotion).
 - Back up the Core SQLite PVC and copy backups off-cluster.
 - Add monitoring, alerting, log aggregation and off-cluster backup copying.

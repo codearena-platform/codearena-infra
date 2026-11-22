@@ -9,7 +9,6 @@ on:
 permissions:
   contents: write
   packages: write
-  pull-requests: write
 
 concurrency:
   group: images-${{ github.ref }}
@@ -140,17 +139,34 @@ jobs:
           CORE_IMAGE=ghcr.io/codearena-platform/codearena-core@${{ steps.core.outputs.digest }}
           EOF
 
-      - name: Open digest update PR
+      # This organization disables "Allow GitHub Actions to create and approve
+      # pull requests", so the workflow can only publish the digest branch.
+      # A maintainer opens the PR manually from the link in the run summary.
+      - name: Publish digest branch for manual PR
         if: github.event_name != 'pull_request'
-        uses: peter-evans/create-pull-request@v6
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          add-paths: k8s/images.env
-          commit-message: "chore: update service image digests"
-          branch: chore/update-image-digests
-          delete-branch: true
-          title: "chore: update service image digests"
-          body: |
-            Automated update of `k8s/images.env` from the latest successful
-            image build. Merge to make these immutable digests the deployment
-            default for the environment that applies this repository.
+        env:
+          DIGEST_BRANCH: chore/update-image-digests
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$DIGEST_BRANCH"
+          git add k8s/images.env
+          if git diff --cached --quiet; then
+            echo "### Image digests are already current" >> "$GITHUB_STEP_SUMMARY"
+            echo "No PR is needed: \`k8s/images.env\` already matches the latest build." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git commit -m "chore: update service image digests"
+          git push --force origin "$DIGEST_BRANCH"
+          {
+            echo "### Manual step: open the digest update PR"
+            echo
+            echo "Actions cannot create PRs in this organization. Open the PR manually:"
+            echo
+            echo "https://github.com/codearena-platform/codearena-infra/compare/main...${DIGEST_BRANCH}"
+            echo
+            echo "Suggested title: \`chore: update service image digests\`"
+            echo
+            echo "Suggested body: Automated update of \`k8s/images.env\` from the latest successful image build."
+          } >> "$GITHUB_STEP_SUMMARY"
