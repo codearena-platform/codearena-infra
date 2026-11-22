@@ -1,0 +1,27 @@
+# Least-privilege RBAC for the scheduled backup job: read-only access to the
+# single Secret that holds the datastore connection strings. No other API
+# permissions are granted to any CodeArena workload.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: backup-secret-reader
+  namespace: codearena
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["codearena-secrets"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: backup-secret-reader
+  namespace: codearena
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: backup-secret-reader
+subjects:
+  - kind: ServiceAccount
+    name: backup
+    namespace: codearena

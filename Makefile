@@ -1,4 +1,4 @@
-.PHONY: tf-fmt-check tf-validate tf-init tf-plan tf-apply k8s-apply k8s-delete
+.PHONY: tf-fmt-check tf-validate tf-init tf-plan tf-apply k8s-apply k8s-delete k8s-validate
 
 NAMESPACE ?= codearena
 
@@ -24,3 +24,6 @@ k8s-apply:
 
 k8s-delete:
 	kubectl delete -f k8s/ --namespace $(NAMESPACE)
+
+k8s-validate:
+	kubeconform -strict -summary k8s/

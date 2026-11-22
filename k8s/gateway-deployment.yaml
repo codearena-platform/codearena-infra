@@ -13,6 +13,8 @@ spec:
       labels:
         app: gateway
     spec:
+      serviceAccountName: gateway
+      automountServiceAccountToken: false
       containers:
         - name: gateway
           image: codearena-gateway:latest
@@ -66,5 +68,6 @@ spec:
       protocol: TCP
       port: 8080
       targetPort: http
-  # TODO: front this with an Ingress terminating TLS before any public exposure.
-  type: LoadBalancer
+  # Public exposure is handled by the TLS-terminating gateway Ingress created
+  # by Terraform. Keep this Service internal-only.
+  type: ClusterIP
