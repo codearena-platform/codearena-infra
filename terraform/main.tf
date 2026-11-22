@@ -54,10 +54,9 @@ resource "helm_release" "postgres" {
   atomic     = true
   timeout    = 600
 
-  set {
-    name      = "auth.postgresPassword"
-    value     = random_password.postgres.result
-    sensitive = true
+  set_sensitive {
+    name  = "auth.postgresPassword"
+    value = random_password.postgres.result
   }
   set {
     name  = "auth.database"
@@ -76,10 +75,9 @@ resource "helm_release" "mongodb" {
   atomic     = true
   timeout    = 600
 
-  set {
-    name      = "auth.rootPassword"
-    value     = random_password.mongo.result
-    sensitive = true
+  set_sensitive {
+    name  = "auth.rootPassword"
+    value = random_password.mongo.result
   }
   set {
     name  = "auth.enabled"
