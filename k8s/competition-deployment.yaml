@@ -35,6 +35,8 @@ spec:
                 secretKeyRef:
                   name: codearena-secrets
                   key: MONGO_URI
+            - name: IAM_URL
+              value: "http://iam:7000"
             - name: SIMULATION_URL
               value: "simulation:50051"
           startupProbe:

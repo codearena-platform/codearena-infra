@@ -41,9 +41,13 @@ resource "kubernetes_secret" "app" {
   data = {
     POSTGRES_DSN  = "postgres://postgres:${random_password.postgres.result}@postgres-postgresql:5432/competition?sslmode=disable"
     MONGO_URI     = "mongodb://root:${random_password.mongo.result}@mongo-mongodb:27017/?authSource=admin"
-    JWT_SECRET    = random_password.jwt.result
     ENCRYPTER_KEY = random_id.encrypter.hex
     REDIS_ADDR    = "redis-master:6379"
+
+    # Core validates IAM-issued tokens with the same JWT secret. Issuer and
+    # audience are set explicitly in k8s/core-deployment.yaml.
+    JWT_SECRET         = random_password.jwt.result
+    WS_ALLOWED_ORIGINS = var.ws_allowed_origins
   }
 }
 
@@ -197,56 +201,6 @@ resource "helm_release" "redis" {
   }
   set {
     name  = "master.service.type"
-    value = "ClusterIP"
-  }
-}
-
-# Kafka is provisioned for the event stream but is not consumed by the current
-# services. Remove it from the deployment until a consumer is implemented.
-resource "helm_release" "kafka" {
-  name       = "kafka"
-  repository = "https://charts.bitnami.com/bitnami"
-  chart      = "kafka"
-  version    = "31.1.1"
-  namespace  = kubernetes_namespace.codearena.metadata[0].name
-  wait       = true
-  atomic     = true
-  timeout    = 600
-
-  set {
-    name  = "provisioning.numPartitions"
-    value = "3"
-  }
-  set {
-    name  = "kraft.enabled"
-    value = "true"
-  }
-  set {
-    name  = "controller.persistence.enabled"
-    value = "true"
-  }
-  set {
-    name  = "controller.persistence.size"
-    value = var.kafka_pvc_size
-  }
-  set {
-    name  = "controller.persistence.storageClass"
-    value = var.storage_class
-  }
-  set {
-    name  = "broker.persistence.enabled"
-    value = "true"
-  }
-  set {
-    name  = "broker.persistence.size"
-    value = var.kafka_pvc_size
-  }
-  set {
-    name  = "broker.persistence.storageClass"
-    value = var.storage_class
-  }
-  set {
-    name  = "service.type"
     value = "ClusterIP"
   }
 }
