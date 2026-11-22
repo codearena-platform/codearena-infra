@@ -136,6 +136,12 @@ are already current. Merge the PR to make the new digests the deployment
 default. The checked-in bootstrap digests are all zeroes until the first
 workflow run; they are not deployable.
 
+The workflow deliberately does not attach commit-SHA OCI labels and ignores
+pushes that only change `k8s/images.env`. Otherwise each digest PR would create
+new labels and therefore new digests, producing an endless promotion loop.
+Registry tags still identify the source commit; they are not part of the image
+manifest and do not change its digest.
+
 Source manifests reference `${GATEWAY_IMAGE}`, `${IAM_IMAGE}`,
 `${COMPETITION_IMAGE}` and `${CORE_IMAGE}`. `make k8s-render` writes resolved
 YAML to `.rendered/k8s/`; `make k8s-apply` and `make k8s-validate` do this
