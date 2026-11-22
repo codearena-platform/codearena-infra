@@ -1,0 +1,6 @@
+# Copy to backend.tf for shared/production use. The values are supplied at
+# `terraform init` time with -backend-config=backend.hcl, so no credentials or
+# bucket names are committed to the repository.
+terraform {
+  backend "s3" {}
+}

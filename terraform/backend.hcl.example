@@ -1,0 +1,8 @@
+# Copy to backend.hcl and replace the placeholders before initializing the
+# remote backend. Keep backend.hcl out of version control (it is gitignored).
+bucket         = "REPLACE_WITH_TERRAFORM_STATE_BUCKET"
+key            = "codearena/platform.tfstate"
+region         = "REPLACE_WITH_AWS_REGION"
+kms_key_id     = "REPLACE_WITH_KMS_KEY_ARN"
+dynamodb_table = "REPLACE_WITH_TERRAFORM_LOCK_TABLE"
+encrypt        = true
