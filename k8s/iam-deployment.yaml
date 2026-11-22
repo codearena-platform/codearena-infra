@@ -16,16 +16,66 @@ spec:
       containers:
         - name: iam
           image: codearena-iam:latest
-          imagePullPolicy: IfNotPresent
+          # The image tag is not pinned yet; Always avoids running a stale
+          # cached image. Replace with an immutable tag/digest once available.
+          imagePullPolicy: Always
           ports:
-            - containerPort: 7000
+            - name: http
+              containerPort: 7000
           env:
-            - name: PORT
+            # The service reads SERVER_HOST/SERVER_PORT, not HOST/PORT.
+            - name: SERVER_HOST
+              value: "0.0.0.0"
+            - name: SERVER_PORT
               value: "7000"
-            - name: DB_URI
-              value: "mongodb://mongo:27017" # Resolves using K8s service "mongo" from helm chart
-            - name: REDIS_ADDR
-              value: "redis-master:6379" # Resolves using K8s redis service
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: codearena-secrets
+                  key: MONGO_URI
+            - name: REDIS_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: codearena-secrets
+                  key: REDIS_ADDR
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: codearena-secrets
+                  key: JWT_SECRET
+            - name: ENCRYPTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: codearena-secrets
+                  key: ENCRYPTER_KEY
+            - name: ENABLE_REDIS
+              value: "true"
+          startupProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 5
+            failureThreshold: 12
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
 ---
 apiVersion: v1
 kind: Service
@@ -36,7 +86,8 @@ spec:
   selector:
     app: iam
   ports:
-    - protocol: TCP
+    - name: http
+      protocol: TCP
       port: 7000
-      targetPort: 7000
+      targetPort: http
   type: ClusterIP

@@ -16,16 +16,42 @@ spec:
       containers:
         - name: gateway
           image: codearena-gateway:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           ports:
-            - containerPort: 8080
+            - name: http
+              containerPort: 8080
           env:
             - name: PORT
               value: "8080"
             - name: IAM_URL
               value: "http://iam:7000"
+            - name: COMPETITION_URL
+              value: "http://competition:7001"
             - name: REALTIME_URL
               value: "http://realtime:8081"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
 ---
 apiVersion: v1
 kind: Service
@@ -36,7 +62,9 @@ spec:
   selector:
     app: gateway
   ports:
-    - protocol: TCP
+    - name: http
+      protocol: TCP
       port: 8080
-      targetPort: 8080
+      targetPort: http
+  # TODO: front this with an Ingress terminating TLS before any public exposure.
   type: LoadBalancer

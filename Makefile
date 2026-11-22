@@ -1,6 +1,14 @@
-.PHONY: tf-init tf-plan tf-apply k8s-apply k8s-delete
+.PHONY: tf-fmt-check tf-validate tf-init tf-plan tf-apply k8s-apply k8s-delete
+
+NAMESPACE ?= codearena
 
 # Terraform Commands
+tf-fmt-check:
+	cd terraform && terraform fmt -check -recursive
+
+tf-validate:
+	cd terraform && terraform init -backend=false -input=false && terraform validate
+
 tf-init:
 	cd terraform && terraform init
 
@@ -12,7 +20,7 @@ tf-apply:
 
 # Kubernetes Commands
 k8s-apply:
-	kubectl apply -f k8s/
+	kubectl apply -f k8s/ --namespace $(NAMESPACE)
 
 k8s-delete:
-	kubectl delete -f k8s/
+	kubectl delete -f k8s/ --namespace $(NAMESPACE)

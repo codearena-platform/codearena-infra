@@ -9,3 +9,9 @@ variable "environment" {
   type        = string
   default     = "dev"
 }
+
+variable "kube_config_path" {
+  description = "Path to the kubeconfig file. Set to null when using in-cluster credentials or OIDC in CI."
+  type        = string
+  default     = "~/.kube/config"
+}

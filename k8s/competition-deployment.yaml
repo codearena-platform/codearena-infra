@@ -16,20 +16,51 @@ spec:
       containers:
         - name: competition
           image: codearena-competition:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           ports:
-            - containerPort: 7001
-            - containerPort: 50052
+            - name: http
+              containerPort: 7001
+            - name: grpc
+              containerPort: 50052
           env:
-            - name: PORT
-              value: "7001"
-            - name: DATABASE_URL
-              # Resolves using K8s postgresql service from helm chart
-              value: "postgres://postgres:password@postgres-postgresql:5432/competition?sslmode=disable" 
+            - name: POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: codearena-secrets
+                  key: POSTGRES_DSN
             - name: MONGO_URI
-              value: "mongodb://mongo:27017"
-            - name: KAFKA_ADDR
-              value: "kafka:9092"
+              valueFrom:
+                secretKeyRef:
+                  name: codearena-secrets
+                  key: MONGO_URI
+            - name: SIMULATION_URL
+              value: "simulation:50051"
+          startupProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 5
+            failureThreshold: 12
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
 ---
 apiVersion: v1
 kind: Service
@@ -43,9 +74,9 @@ spec:
     - name: http
       protocol: TCP
       port: 7001
-      targetPort: 7001
+      targetPort: http
     - name: grpc
       protocol: TCP
       port: 50052
-      targetPort: 50052
+      targetPort: grpc
   type: ClusterIP
