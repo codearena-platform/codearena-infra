@@ -1,0 +1,138 @@
+# Shared backup volume for the logical dumps produced by the CronJob below.
+# Match storageClassName to Terraform's var.storage_class before production use.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: datastore-backups
+  namespace: codearena
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 20Gi
+---
+# Daily logical backups at 02:00 UTC, retained for 7 days. See README for the
+# restore runbook and the RPO/RTO this provides.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: datastore-backup
+  namespace: codearena
+spec:
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 3600
+      template:
+        metadata:
+          labels:
+            app: backup
+        spec:
+          serviceAccountName: backup
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          volumes:
+            - name: credentials
+              emptyDir: {}
+            - name: backups
+              persistentVolumeClaim:
+                claimName: datastore-backups
+          initContainers:
+            - name: load-credentials
+              # Pinned by digest; this is kubectl 1.37.2 (Photon OS, has /bin/sh).
+              image: bitnami/kubectl@sha256:8919c149c2e3d6860e0143c117900e64d71395172aaef0e01e604bb98c8e7ce0
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  kubectl get secret codearena-secrets -o jsonpath='{.data.POSTGRES_DSN}' \
+                    | base64 -d > /credentials/postgres-dsn
+                  kubectl get secret codearena-secrets -o jsonpath='{.data.MONGO_URI}' \
+                    | base64 -d > /credentials/mongo-uri
+                  chmod 600 /credentials/postgres-dsn /credentials/mongo-uri
+              volumeMounts:
+                - name: credentials
+                  mountPath: /credentials
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 200m
+                  memory: 128Mi
+          containers:
+            - name: postgres-backup
+              image: postgres:16.4-alpine
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  mkdir -p /backups/postgresql
+                  pg_dump --format=custom --no-owner --no-acl \
+                    "$(cat /credentials/postgres-dsn)" \
+                    | gzip > "/backups/postgresql/competition-$(date -u +%Y%m%dT%H%M%SZ).dump.gz"
+                  find /backups/postgresql -type f -name '*.dump.gz' -mtime +7 -delete
+              volumeMounts:
+                - name: credentials
+                  mountPath: /credentials
+                  readOnly: true
+                - name: backups
+                  mountPath: /backups
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+            - name: mongodb-backup
+              image: mongo:7.0.14
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  mkdir -p /backups/mongodb
+                  mongodump --uri="$(cat /credentials/mongo-uri)" --archive --gzip \
+                    > "/backups/mongodb/admin-$(date -u +%Y%m%dT%H%M%SZ).archive.gz"
+                  find /backups/mongodb -type f -name '*.archive.gz' -mtime +7 -delete
+              volumeMounts:
+                - name: credentials
+                  mountPath: /credentials
+                  readOnly: true
+                - name: backups
+                  mountPath: /backups
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi

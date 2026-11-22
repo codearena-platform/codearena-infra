@@ -13,6 +13,8 @@ spec:
       labels:
         app: competition
     spec:
+      serviceAccountName: competition
+      automountServiceAccountToken: false
       containers:
         - name: competition
           image: codearena-competition:latest

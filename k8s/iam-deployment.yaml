@@ -13,6 +13,8 @@ spec:
       labels:
         app: iam
     spec:
+      serviceAccountName: iam
+      automountServiceAccountToken: false
       containers:
         - name: iam
           image: codearena-iam:latest

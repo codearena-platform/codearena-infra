@@ -15,3 +15,51 @@ variable "kube_config_path" {
   type        = string
   default     = "~/.kube/config"
 }
+
+variable "ingress_host" {
+  description = "Public DNS name for the gateway Ingress. DNS must point at the ingress controller."
+  type        = string
+  default     = "codearena.example.com"
+}
+
+variable "ingress_tls_secret_name" {
+  description = "Name of an existing TLS Secret in the namespace containing the certificate for ingress_host."
+  type        = string
+  default     = "codearena-tls"
+}
+
+variable "ingress_class_name" {
+  description = "Ingress class handled by the installed controller (nginx by default)."
+  type        = string
+  default     = "nginx"
+}
+
+variable "storage_class" {
+  description = "StorageClass used by all datastore PVCs. Must exist and support dynamic provisioning."
+  type        = string
+  default     = "standard"
+}
+
+variable "postgres_pvc_size" {
+  description = "Size of the PostgreSQL data PVC."
+  type        = string
+  default     = "20Gi"
+}
+
+variable "mongodb_pvc_size" {
+  description = "Size of the MongoDB data PVC."
+  type        = string
+  default     = "20Gi"
+}
+
+variable "redis_pvc_size" {
+  description = "Size of the Redis data PVC."
+  type        = string
+  default     = "10Gi"
+}
+
+variable "kafka_pvc_size" {
+  description = "Size of each Kafka controller/broker PVC."
+  type        = string
+  default     = "50Gi"
+}
