@@ -36,5 +36,7 @@ jobs:
         run: make test
       - name: Check migration manifests
         run: make migrations-check
+      - name: Check backup manifests
+        run: make backup-check
       - name: Validate rendered Kubernetes manifests
         run: make k8s-validate

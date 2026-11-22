@@ -1,26 +1,33 @@
 # Least-privilege RBAC for the scheduled backup job: read-only access to the
-# single Secret that holds the datastore connection strings. No other API
-# permissions are granted to any CodeArena workload.
+# single Secret with the datastore connection strings, plus the pod/exec access
+# needed to take an online SQLite snapshot from the Core pod. No other workload
+# is granted API permissions.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: backup-secret-reader
+  name: backup-job
   namespace: codearena
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
     resourceNames: ["codearena-secrets"]
     verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: backup-secret-reader
+  name: backup-job
   namespace: codearena
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: backup-secret-reader
+  name: backup-job
 subjects:
   - kind: ServiceAccount
     name: backup

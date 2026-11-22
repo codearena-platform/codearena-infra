@@ -1,4 +1,4 @@
-.PHONY: tf-fmt-check tf-validate tf-init tf-plan tf-apply k8s-render k8s-apply k8s-delete k8s-validate migrations-check k8s-migrate test
+.PHONY: tf-fmt-check tf-validate tf-init tf-plan tf-apply k8s-render k8s-apply k8s-delete k8s-validate migrations-check backup-check k8s-migrate test
 
 NAMESPACE ?= codearena
 K8S_DIR ?= k8s
@@ -36,6 +36,9 @@ k8s-validate: k8s-render
 
 migrations-check:
 	python3 scripts/check_migrations.py
+
+backup-check:
+	python3 scripts/check_backup.py
 
 # Trigger a one-off Job from the schema-migrations CronJob and wait for it.
 # The migration is idempotent, so the same command is safe on every release.

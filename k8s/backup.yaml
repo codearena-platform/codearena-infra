@@ -1,5 +1,7 @@
 # Shared backup volume for the logical dumps produced by the CronJob below.
 # Match storageClassName to Terraform's var.storage_class before production use.
+# Keep at least twice the largest datastores free: SQLite snapshots are written
+# beside the live database before being streamed into this volume.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -13,8 +15,10 @@ spec:
     requests:
       storage: 20Gi
 ---
-# Daily logical backups at 02:00 UTC, retained for 7 days. See README for the
-# restore runbook and the RPO/RTO this provides.
+# Daily logical backups at 02:00 UTC, retained for 7 days. The three dump
+# containers write completion markers; the uploader waits for all of them so an
+# off-cluster copy is always a complete set. See docs/backup-runbook.md for the
+# restore procedure and RPO/RTO.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -64,9 +68,13 @@ spec:
                   kubectl get secret codearena-secrets -o jsonpath='{.data.MONGO_URI}' \
                     | base64 -d > /credentials/mongo-uri
                   chmod 600 /credentials/postgres-dsn /credentials/mongo-uri
+                  # A retried Job must not see stale completion markers.
+                  rm -f /backups/.postgres.done /backups/.mongodb.done /backups/.sqlite.done
               volumeMounts:
                 - name: credentials
                   mountPath: /credentials
+                - name: backups
+                  mountPath: /backups
               securityContext:
                 allowPrivilegeEscalation: false
                 capabilities:
@@ -91,6 +99,7 @@ spec:
                     "$(cat /credentials/postgres-dsn)" \
                     | gzip > "/backups/postgresql/competition-$(date -u +%Y%m%dT%H%M%SZ).dump.gz"
                   find /backups/postgresql -type f -name '*.dump.gz' -mtime +7 -delete
+                  touch /backups/.postgres.done
               volumeMounts:
                 - name: credentials
                   mountPath: /credentials
@@ -119,6 +128,7 @@ spec:
                   mongodump --uri="$(cat /credentials/mongo-uri)" --archive --gzip \
                     > "/backups/mongodb/admin-$(date -u +%Y%m%dT%H%M%SZ).archive.gz"
                   find /backups/mongodb -type f -name '*.archive.gz' -mtime +7 -delete
+                  touch /backups/.mongodb.done
               volumeMounts:
                 - name: credentials
                   mountPath: /credentials
@@ -133,6 +143,136 @@ spec:
                 requests:
                   cpu: 50m
                   memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+            # sqlite3 is installed in the Core image (see codearena-core PR #13).
+            # The online .backup API gives a consistent snapshot without stopping
+            # Core; a plain copy of a live SQLite file would not.
+            - name: sqlite-backup
+              image: bitnami/kubectl@sha256:8919c149c2e3d6860e0143c117900e64d71395172aaef0e01e604bb98c8e7ce0
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  POD="$(kubectl -n "$NAMESPACE" get pods -l app=simulation \
+                    --field-selector=status.phase=Running \
+                    -o jsonpath='{.items[0].metadata.name}')"
+                  test -n "$POD"
+                  STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+                  SNAPSHOT="/data/codearena-backup-$STAMP.db"
+                  cleanup() {
+                    kubectl -n "$NAMESPACE" exec "$POD" -- rm -f "$SNAPSHOT" || true
+                  }
+                  trap cleanup EXIT
+                  kubectl -n "$NAMESPACE" exec "$POD" -- \
+                    sqlite3 /data/codearena.db ".backup '$SNAPSHOT'"
+                  mkdir -p /backups/sqlite
+                  kubectl -n "$NAMESPACE" exec "$POD" -- cat "$SNAPSHOT" \
+                    > "/backups/sqlite/codearena-$STAMP.db"
+                  test -s "/backups/sqlite/codearena-$STAMP.db"
+                  find /backups/sqlite -type f -name '*.db' -mtime +7 -delete
+                  touch /backups/.sqlite.done
+              volumeMounts:
+                - name: backups
+                  mountPath: /backups
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+            # Uploads only after all three dumps succeeded. The Secret is optional:
+            # clusters without an S3 target keep the in-cluster copies only.
+            - name: offcluster-copy
+              # Pinned by digest from amazon/aws-cli:2.22.35.
+              image: amazon/aws-cli@sha256:6977c83ae3dc99f28fcf8276b9ea5eec33833cd5be40574b34112e98113ec7a2
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: S3_ENDPOINT
+                  valueFrom:
+                    secretKeyRef:
+                      name: codearena-backup-s3
+                      key: endpoint
+                      optional: true
+                - name: S3_BUCKET
+                  valueFrom:
+                    secretKeyRef:
+                      name: codearena-backup-s3
+                      key: bucket
+                      optional: true
+                - name: S3_REGION
+                  valueFrom:
+                    secretKeyRef:
+                      name: codearena-backup-s3
+                      key: region
+                      optional: true
+                - name: S3_PREFIX
+                  valueFrom:
+                    secretKeyRef:
+                      name: codearena-backup-s3
+                      key: prefix
+                      optional: true
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: codearena-backup-s3
+                      key: access_key
+                      optional: true
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: codearena-backup-s3
+                      key: secret_key
+                      optional: true
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  for marker in /backups/.postgres.done /backups/.mongodb.done /backups/.sqlite.done; do
+                    until test -f "$marker"; do sleep 5; done
+                  done
+                  # Optional env vars are absent when the Secret is missing, so
+                  # use default expansions under `set -u`.
+                  BUCKET="${S3_BUCKET:-}"
+                  if test -z "$BUCKET"; then
+                    echo "codearena-backup-s3 not configured; keeping local dumps only"
+                    exit 0
+                  fi
+                  PREFIX="${S3_PREFIX:-}"
+                  if test -z "$PREFIX"; then PREFIX=codearena; fi
+                  REGION="${S3_REGION:-}"
+                  if test -z "$REGION"; then REGION=us-east-1; fi
+                  ENDPOINT_ARGS=""
+                  if test -n "${S3_ENDPOINT:-}"; then ENDPOINT_ARGS="--endpoint-url $S3_ENDPOINT"; fi
+                  for dir in postgresql mongodb sqlite; do
+                    aws s3 cp "/backups/$dir" "s3://$BUCKET/$PREFIX/$dir/" \
+                      --recursive --region "$REGION" $ENDPOINT_ARGS --only-show-errors
+                  done
+                  echo "Off-cluster backup upload complete"
+              volumeMounts:
+                - name: backups
+                  mountPath: /backups
+                  readOnly: true
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
                 limits:
                   cpu: 500m
                   memory: 512Mi

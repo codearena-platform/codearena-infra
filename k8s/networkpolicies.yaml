@@ -343,9 +343,10 @@ spec:
             matchLabels:
               app.kubernetes.io/name: redis
 ---
-# The backup CronJob needs datastore access and the Kubernetes API (to read the
-# credentials Secret through its least-privilege Role). Narrow the ipBlocks to
-# your cluster's API server address before production rollout.
+# The backup CronJob needs datastore access, the Kubernetes API (to read the
+# credentials Secret and exec sqlite3 in the Core pod) and HTTPS to the S3
+# endpoint for off-cluster copies. Narrow the 0.0.0.0/0 rule to your API server
+# and object-storage addresses before production rollout.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -379,6 +380,9 @@ spec:
             cidr: 172.16.0.0/12
         - ipBlock:
             cidr: 192.168.0.0/16
+        # Public S3-compatible endpoints and HTTPS Kubernetes API endpoints.
+        - ipBlock:
+            cidr: 0.0.0.0/0
       ports:
         - protocol: TCP
           port: 443
