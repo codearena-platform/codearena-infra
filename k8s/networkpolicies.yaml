@@ -86,12 +86,11 @@ spec:
           port: 7001
         - protocol: TCP
           port: 50052
-    # realtime is not deployed by this repository yet, but the gateway already
-    # points at it. The rule is harmless until matching pods exist.
+    # The realtime Service selects the same Core pods as the simulation Service.
     - to:
         - podSelector:
             matchLabels:
-              app: realtime
+              app: simulation
       ports:
         - protocol: TCP
           port: 8081
@@ -113,6 +112,9 @@ spec:
         - podSelector:
             matchLabels:
               app: gateway
+        - podSelector:
+            matchLabels:
+              app: competition
       ports:
         - protocol: TCP
           port: 7000
@@ -169,7 +171,13 @@ spec:
       ports:
         - protocol: TCP
           port: 27017
-    # simulation is deployed outside this repository today.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: iam
+      ports:
+        - protocol: TCP
+          port: 7000
     - to:
         - podSelector:
             matchLabels:
@@ -181,16 +189,12 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-future-service-ingress
+  name: allow-core-ingress
   namespace: codearena
 spec:
   podSelector:
-    matchExpressions:
-      - key: app
-        operator: In
-        values:
-          - realtime
-          - simulation
+    matchLabels:
+      app: simulation
   policyTypes:
     - Ingress
   ingress:
@@ -208,6 +212,26 @@ spec:
       ports:
         - protocol: TCP
           port: 50051
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-core-egress
+  namespace: codearena
+spec:
+  podSelector:
+    matchLabels:
+      app: simulation
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+      ports:
+        - protocol: TCP
+          port: 6379
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -297,6 +321,9 @@ spec:
         - podSelector:
             matchLabels:
               app: iam
+        - podSelector:
+            matchLabels:
+              app: simulation
       ports:
         - protocol: TCP
           port: 6379
@@ -309,31 +336,6 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: redis
----
-# Kafka has no consumers yet: only controller/broker-to-controller/broker
-# traffic (KRaft metadata quorum and replication) is permitted.
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: allow-kafka-internal-traffic
-  namespace: codearena
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: kafka
-  policyTypes:
-    - Ingress
-    - Egress
-  ingress:
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: kafka
-  egress:
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: kafka
 ---
 # The backup CronJob needs datastore access and the Kubernetes API (to read the
 # credentials Secret through its least-privilege Role). Narrow the ipBlocks to

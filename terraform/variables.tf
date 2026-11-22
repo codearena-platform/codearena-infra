@@ -58,8 +58,8 @@ variable "redis_pvc_size" {
   default     = "10Gi"
 }
 
-variable "kafka_pvc_size" {
-  description = "Size of each Kafka controller/broker PVC."
+variable "ws_allowed_origins" {
+  description = "Comma-separated browser origins allowed to open Core realtime WebSockets. Empty uses same-origin fallback."
   type        = string
-  default     = "50Gi"
+  default     = ""
 }

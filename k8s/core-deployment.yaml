@@ -1,0 +1,156 @@
+# Core runs the simulation gRPC API and the embedded realtime WebSocket
+# service in one process. The local Docker runtime is deliberately disabled:
+# bot containers are not supported in this cluster deployment, so bots must
+# connect through BotService.Connect.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: core-data
+  namespace: codearena
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: simulation
+  namespace: codearena
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: simulation
+  template:
+    metadata:
+      labels:
+        app: simulation
+    spec:
+      serviceAccountName: simulation
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: core-data
+        - name: tmp
+          emptyDir: {}
+      containers:
+        - name: simulation
+          image: ghcr.io/codearena-platform/codearena-core:latest
+          imagePullPolicy: Always
+          # Override the image ENTRYPOINT's default `start` command. `engine`
+          # starts gRPC + embedded realtime only; an empty runtime address keeps
+          # the process from trying to reach a Docker runtime that is not here.
+          args:
+            - engine
+            - --grpc-port=:50051
+            - --web-port=:50052
+            - --realtime-port=:8081
+            - --runtime-addr=
+            - --db-path=/data/codearena.db
+          ports:
+            - name: grpc
+              containerPort: 50051
+            - name: web
+              containerPort: 50052
+            - name: realtime
+              containerPort: 8081
+          env:
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: codearena-secrets
+                  key: JWT_SECRET
+            # IAM signs tokens with these claims; Core rejects tokens with
+            # different issuers/audiences even when the signature is valid.
+            - name: JWT_ISSUER
+              value: "codearena-iam"
+            - name: JWT_AUDIENCE
+              value: "codearena"
+            - name: WS_ALLOWED_ORIGINS
+              valueFrom:
+                secretKeyRef:
+                  name: codearena-secrets
+                  key: WS_ALLOWED_ORIGINS
+            - name: REDIS_ADDR
+              valueFrom:
+                secretKeyRef:
+                  name: codearena-secrets
+                  key: REDIS_ADDR
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+          startupProbe:
+            tcpSocket:
+              port: grpc
+            periodSeconds: 5
+            failureThreshold: 12
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+# Judge connection: competition dials this gRPC Service via SIMULATION_URL.
+apiVersion: v1
+kind: Service
+metadata:
+  name: simulation
+  namespace: codearena
+spec:
+  selector:
+    app: simulation
+  ports:
+    - name: grpc
+      protocol: TCP
+      port: 50051
+      targetPort: grpc
+    - name: web
+      protocol: TCP
+      port: 50052
+      targetPort: web
+  type: ClusterIP
+---
+# Spectator WebSocket connection: gateway proxies /ws/ here.
+apiVersion: v1
+kind: Service
+metadata:
+  name: realtime
+  namespace: codearena
+spec:
+  selector:
+    app: simulation
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8081
+      targetPort: realtime
+  type: ClusterIP
