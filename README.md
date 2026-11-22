@@ -10,6 +10,7 @@ Infrastructure as code and Kubernetes manifests for the CodeArena platform.
 - `scripts/render_k8s.py`: substitutes image references into `.rendered/k8s/` before validation or deployment.
 - `scripts/check_migrations.py`: static checks CI runs against the migration manifests.
 - `docs/backup-runbook.md`: backup verification, off-cluster configuration and full restore procedure.
+- `docs/oncall-runbook.md`: alert routing, dashboards, log queries and incident response steps.
 
 ## Prerequisites
 
@@ -56,6 +57,11 @@ Terraform inputs (set as `TF_VAR_*` environment variables or in a `terraform.tfv
 | `redis_pvc_size` | `10Gi` | Redis data volume. |
 | `ws_allowed_origins` | `""` | Comma-separated browser origins allowed to open Core realtime WebSockets; empty uses same-origin fallback. |
 | `backup_s3` | `null` | Optional S3-compatible target for off-cluster backups; see [backup runbook](docs/backup-runbook.md). |
+| `log_retention_period` | `168h` | Loki retention for centralized logs (7 days). |
+| `metrics_pvc_size` / `log_pvc_size` | `20Gi` | Prometheus and Loki storage volumes. |
+| `ingress_controller_namespace` | `ingress-nginx` | Namespace whose ingress-nginx metrics feed the error-rate alert. |
+| `alert_slack_channel` | `codearena-alerts` | Generic Slack receiver channel. |
+| `alert_slack_webhook_url` / `alert_pagerduty_routing_key` | `""` | Sensitive alert destinations; empty values leave disabled placeholders. |
 | `kube_config_path` | `~/.kube/config` | Kubeconfig; set to `null` for in-cluster/OIDC credentials. |
 
 ### Remote state
@@ -333,9 +339,26 @@ including the Core SQLite PVC and off-cluster downloads, see
 - **Retention:** 7 daily copies on the in-cluster backup PVC, plus the lifecycle retention configured on the S3-compatible target. Perform a restore drill at least monthly.
 - Configure `var.backup_s3` (or the `codearena-backup-s3` Secret) before relying on backups for regional disaster recovery; without it, copies stay on the same cluster as the datastores.
 
+## Monitoring and on-call
+
+`terraform/monitoring.tf` installs pinned Helm releases for
+kube-prometheus-stack (Prometheus, Alertmanager, Grafana), Loki, Promtail and
+PostgreSQL/MongoDB/Redis exporters. Metrics cover workloads, datastores and
+ingress; a `CodeArena Operational Overview` Grafana dashboard is provisioned
+automatically. Alerts cover pod restarts/CrashLoopBackOff, PVC usage above 85%,
+failed `schema-migrations-*` and `datastore-backup-*` Jobs, and ingress 5xx
+above 5%. Loki collects container logs with a 7-day default retention.
+
+Alertmanager routes critical alerts to PagerDuty and warnings to Slack. Supply
+`alert_pagerduty_routing_key` and `alert_slack_webhook_url` (both sensitive
+Terraform variables) at apply time; until then the receivers are disabled
+placeholders and alerts are only visible in Alertmanager. See
+[docs/oncall-runbook.md](docs/oncall-runbook.md) for alert meanings, log queries,
+assumptions and the incident response steps.
+
 ## Remaining work
 
 - Provision the S3 bucket, KMS key and DynamoDB lock table referenced by `terraform/backend.hcl.example` and grant the Terraform role access. The encrypted backend configuration is included; the cloud resources are environment-specific.
 - Enable "Allow GitHub Actions to create and approve pull requests" at the organization level, then restore automatic PR creation in `.github/workflows/images.yml` and remove the manual step from [Images and promotion](#images-and-promotion).
 - Provision the S3-compatible bucket/credentials used by `var.backup_s3`; the uploader is optional until they exist.
-- Add monitoring, alerting and log aggregation.
+- Supply real Slack/PagerDuty destinations via `alert_slack_webhook_url` and `alert_pagerduty_routing_key` so alerts are delivered off-cluster.
