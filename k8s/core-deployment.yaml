@@ -47,8 +47,9 @@ spec:
           emptyDir: {}
       containers:
         - name: simulation
-          image: ghcr.io/codearena-platform/codearena-core:latest
-          imagePullPolicy: Always
+          # Rendered from k8s/images.env as registry/repository@sha256:<digest>.
+          image: ${CORE_IMAGE}
+          imagePullPolicy: IfNotPresent
           # Override the image ENTRYPOINT's default `start` command. `engine`
           # starts gRPC + embedded realtime only; an empty runtime address keeps
           # the process from trying to reach a Docker runtime that is not here.

@@ -32,5 +32,7 @@ jobs:
           curl -sSLo /tmp/kubeconform.tar.gz \
             https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
           sudo tar -xzf /tmp/kubeconform.tar.gz -C /usr/local/bin kubeconform
-      - name: Validate Kubernetes manifests
-        run: kubeconform -strict -summary k8s/
+      - name: Test manifest renderer
+        run: make test
+      - name: Validate rendered Kubernetes manifests
+        run: make k8s-validate

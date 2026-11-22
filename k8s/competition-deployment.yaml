@@ -17,8 +17,9 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: competition
-          image: codearena-competition:latest
-          imagePullPolicy: Always
+          # Rendered from k8s/images.env as registry/repository@sha256:<digest>.
+          image: ${COMPETITION_IMAGE}
+          imagePullPolicy: IfNotPresent
           ports:
             - name: http
               containerPort: 7001
