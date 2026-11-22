@@ -9,6 +9,7 @@ Infrastructure as code and Kubernetes manifests for the CodeArena platform.
 - `k8s/images.env`: immutable registry/digest references used to render the templates.
 - `scripts/render_k8s.py`: substitutes image references into `.rendered/k8s/` before validation or deployment.
 - `scripts/check_migrations.py`: static checks CI runs against the migration manifests.
+- `docs/backup-runbook.md`: backup verification, off-cluster configuration and full restore procedure.
 
 ## Prerequisites
 
@@ -54,6 +55,7 @@ Terraform inputs (set as `TF_VAR_*` environment variables or in a `terraform.tfv
 | `mongodb_pvc_size` | `20Gi` | MongoDB data volume. |
 | `redis_pvc_size` | `10Gi` | Redis data volume. |
 | `ws_allowed_origins` | `""` | Comma-separated browser origins allowed to open Core realtime WebSockets; empty uses same-origin fallback. |
+| `backup_s3` | `null` | Optional S3-compatible target for off-cluster backups; see [backup runbook](docs/backup-runbook.md). |
 | `kube_config_path` | `~/.kube/config` | Kubeconfig; set to `null` for in-cluster/OIDC credentials. |
 
 ### Remote state
@@ -233,8 +235,8 @@ and unwired migration Jobs.
 Notes for cluster-specific tuning:
 
 - The CoreDNS selector is `k8s-app: kube-dns`; adjust it if your distribution uses a different label.
-- The API-server egress rule currently allows private RFC1918 ranges on TCP 443/6443. Narrow it to your API server address.
-- Application pods use dedicated ServiceAccounts with no mounted API token. The backup ServiceAccount has a `Role` restricted to `get` on the single `codearena-secrets` Secret.
+- The API-server egress rule allows private RFC1918 ranges plus `0.0.0.0/0` on TCP 443/6443 for public API endpoints and S3-compatible storage. Narrow it to your API server and object-storage addresses.
+- Application pods use dedicated ServiceAccounts with no mounted API token. The backup ServiceAccount has a `Role` restricted to `get` on `codearena-secrets`, `get`/`list` on pods and `create` on `pods/exec` for the SQLite snapshot.
 - Datastore Services are explicitly `ClusterIP`; nothing in the datastore layer is publicly reachable.
 
 ## Persistence, backup and restore
@@ -247,9 +249,15 @@ Helm chart versions are pinned, persistence is enabled, and all datastore Servic
 | `mongodb` | `16.3.2` | `persistence.size` | `var.mongodb_pvc_size` (20Gi) |
 | `redis` | `20.6.1` | `master.persistence.size` | `var.redis_pvc_size` (10Gi) |
 
-`k8s/backup.yaml` creates a shared `datastore-backups` PVC (20Gi, `standard` class) and a CronJob that runs daily at 02:00 UTC. It writes a compressed PostgreSQL custom-format dump and a gzipped MongoDB archive, keeps seven days of files, and uses the least-privilege `backup` ServiceAccount. Redis is not backed up: it holds rebuildable cache/session data. The Core SQLite file is on its own `core-data` PVC; add it to the backup job before relying on replay history for recovery.
+`k8s/backup.yaml` creates a shared `datastore-backups` PVC (20Gi, `standard` class) and a CronJob that runs daily at 02:00 UTC. It writes a compressed PostgreSQL custom-format dump, a gzipped MongoDB archive and a **consistent SQLite snapshot of `core-data`** (via `sqlite3 .backup` in the running Core pod), keeps seven days of files, and uses the least-privilege `backup` ServiceAccount. After all three dumps succeed, an AWS CLI container copies them to an optional S3-compatible target when `var.backup_s3` or the `codearena-backup-s3` Secret is configured. Redis is not backed up: it holds rebuildable cache/session data.
+
+The Core image must include the `sqlite3` CLI (Alpine `sqlite` package) for the snapshot. See [docs/backup-runbook.md](docs/backup-runbook.md) for configuration, verification and the complete restore procedure, including the SQLite PVC.
 
 ### Restore runbook
+
+The short PostgreSQL/MongoDB helper flow is below. For the full procedure,
+including the Core SQLite PVC and off-cluster downloads, see
+[docs/backup-runbook.md](docs/backup-runbook.md).
 
 1. Stop writers to avoid a split-brain restore:
 
@@ -322,12 +330,12 @@ Helm chart versions are pinned, persistence is enabled, and all datastore Servic
 
 - **RPO:** up to 24 hours (daily 02:00 UTC logical backups). Shorten the CronJob schedule if a lower RPO is required.
 - **RTO:** target 1 hour, assuming the PVC is available and the dataset fits the stated volume sizes; dominated by dump restore time and application validation.
-- **Retention:** 7 daily copies on the in-cluster backup PVC. Perform a restore drill at least monthly.
-- Backups live on the same cluster as the datastores; copy them off-cluster (snapshots/object storage) before relying on them for regional disaster recovery.
+- **Retention:** 7 daily copies on the in-cluster backup PVC, plus the lifecycle retention configured on the S3-compatible target. Perform a restore drill at least monthly.
+- Configure `var.backup_s3` (or the `codearena-backup-s3` Secret) before relying on backups for regional disaster recovery; without it, copies stay on the same cluster as the datastores.
 
 ## Remaining work
 
 - Provision the S3 bucket, KMS key and DynamoDB lock table referenced by `terraform/backend.hcl.example` and grant the Terraform role access. The encrypted backend configuration is included; the cloud resources are environment-specific.
 - Enable "Allow GitHub Actions to create and approve pull requests" at the organization level, then restore automatic PR creation in `.github/workflows/images.yml` and remove the manual step from [Images and promotion](#images-and-promotion).
-- Back up the Core SQLite PVC and copy backups off-cluster.
-- Add monitoring, alerting, log aggregation and off-cluster backup copying.
+- Provision the S3-compatible bucket/credentials used by `var.backup_s3`; the uploader is optional until they exist.
+- Add monitoring, alerting and log aggregation.
