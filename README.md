@@ -5,9 +5,10 @@ Infrastructure as code and Kubernetes manifests for the CodeArena platform.
 ## Directory Structure
 
 - `terraform/`: namespace, datastore Helm releases, the application `Secret` and the TLS-terminating gateway `Ingress`.
-- `k8s/`: Deployments, Services, ServiceAccounts, RBAC, NetworkPolicies and the scheduled backup for the CodeArena applications (`gateway`, `iam`, `competition`, `simulation`/`realtime`). YAML files are templates with `${...}` image placeholders.
+- `k8s/`: Deployments, Services, ServiceAccounts, RBAC, NetworkPolicies, schema migrations and the scheduled backup for the CodeArena applications (`gateway`, `iam`, `competition`, `simulation`/`realtime`). YAML files are templates with `${...}` image placeholders.
 - `k8s/images.env`: immutable registry/digest references used to render the templates.
 - `scripts/render_k8s.py`: substitutes image references into `.rendered/k8s/` before validation or deployment.
+- `scripts/check_migrations.py`: static checks CI runs against the migration manifests.
 
 ## Prerequisites
 
@@ -31,8 +32,10 @@ make tf-init   # configure an encrypted remote backend first for shared/prod use
 make tf-fmt-check
 make tf-validate
 make tf-plan   # review the infrastructure changes
-make tf-apply  # create the namespace, datastores, Secret and Ingress
-make k8s-apply # render immutable image refs, then deploy apps/policies/backup
+make tf-apply          # create the namespace, datastores, Secret and Ingress
+make k8s-apply         # render immutable image refs, deploy apps/policies/migrations/backup
+make migrations-check  # validate migration invariants locally
+make k8s-migrate       # run the versioned migration Job and wait for completion
 make k8s-validate
 make k8s-delete
 ```
@@ -129,6 +132,62 @@ for fan-out and validates spectator JWTs with the IAM secret. `JWT_ISSUER` and
 This makes judging and live spectators functional after `make k8s-apply`.
 Kafka was removed because no service consumes `KAFKA_ADDR`.
 
+## Schema migrations
+
+`k8s/migrations-configmap.yaml` holds versioned, idempotent migrations and their
+runners. `k8s/migrations-job.yaml` defines a `schema-migrations` CronJob whose
+template runs two init containers in order:
+
+1. `postgres-migrations` applies `postgres-V*.sql` with `psql`. All DDL and the
+   matching row in `infra_schema_migrations` are committed in one transaction,
+   serialised by `pg_advisory_xact_lock`. A recorded version whose file checksum
+   changed makes the Job fail instead of silently applying modified DDL.
+2. `mongo-migrations` creates the `codearena.matches`, `iam.users` and
+   `iam.clients` lookup indexes from `mongo-001-indexes.js`. MongoDB is deployed
+   as a standalone chart, so there is no multi-document transaction: index
+   creation is idempotent and the tracking document is written only after all
+   indexes succeed. A retry after a partial failure is therefore safe.
+
+The DDL mirrors versions 1 and 2 of
+`codearena-platform/internal/competition/db/postgres/migrations.go`. The app
+still runs its own migrations at startup; both sets use `IF NOT EXISTS`, and
+their tracking tables are separate. The IAM data migration stays application
+owned and is intentionally not duplicated here.
+
+### Release and upgrade
+
+1. Take a backup (or confirm the latest scheduled dump is healthy).
+2. Apply the infrastructure and manifests: `make tf-apply && make k8s-apply`.
+3. Run the migration Job explicitly with `make k8s-migrate`. It is equivalent
+   to `kubectl create job --from=cronjob/schema-migrations <unique-name>` and
+   waits for completion. The monthly schedule is only an idempotent safety net.
+4. Roll the workloads forward. With the image pipeline, merge the digest PR from
+   `.github/workflows/images.yml` and re-apply before restarting the apps.
+5. Verify the Job logs, `/health` through the Ingress, and that both tracker
+   tables contain the expected versions.
+
+New schema changes go in a new `postgres-VNNN-*.sql` file or a new entry in the
+MongoDB `migrations` array. Never edit a version that has already been applied:
+the checksum guard will reject it. Every statement must be safe to re-run.
+
+### Rollback
+
+There are no destructive down migrations. To undo a bad release:
+
+1. If only application code is at fault, roll back the image digests in
+   `k8s/images.env` (see [Images and promotion](#images-and-promotion)), re-apply
+   and restart. Leave the applied schema in place.
+2. If the schema itself is incompatible, stop writers with the first command in
+   the [restore runbook](#restore-runbook), restore PostgreSQL/MongoDB from the
+   backup taken before the release, and restart the applications. Restoring the
+   dump also restores the tracking table to its pre-upgrade state.
+3. Fix the problem forward with a new migration version. Do not delete rows from
+   `infra_schema_migrations` by hand; on a standalone MongoDB, deleting the
+   tracking document would allow old, changed index definitions to be recreated.
+
+`make migrations-check` and CI reject destructive DDL, missing checksum guards
+and unwired migration Jobs.
+
 ## Network isolation
 
 `k8s/networkpolicies.yaml` applies deny-by-default ingress and egress to every pod in the namespace, then explicitly allows only:
@@ -140,6 +199,7 @@ Kafka was removed because no service consumes `KAFKA_ADDR`.
 - simulation → Redis:6379;
 - competition → PostgreSQL:5432 and MongoDB:27017;
 - backup → PostgreSQL:5432, MongoDB:27017, DNS and the Kubernetes API (to read the Secret);
+- migrations → PostgreSQL:5432 and MongoDB:27017;
 - DNS (`kube-system` CoreDNS, UDP/TCP 53) for every pod;
 - intra-datastore traffic for replication/quorum (PostgreSQL, MongoDB, Redis).
 
@@ -244,4 +304,3 @@ Helm chart versions are pinned, persistence is enabled, and all datastore Servic
 - Publish immutable workload images and remove `imagePullPolicy: Always`.
 - Back up the Core SQLite PVC and copy backups off-cluster.
 - Add monitoring, alerting, log aggregation and off-cluster backup copying.
-- Define a schema migration strategy for PostgreSQL/MongoDB.

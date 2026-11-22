@@ -34,5 +34,7 @@ jobs:
           sudo tar -xzf /tmp/kubeconform.tar.gz -C /usr/local/bin kubeconform
       - name: Test manifest renderer
         run: make test
+      - name: Check migration manifests
+        run: make migrations-check
       - name: Validate rendered Kubernetes manifests
         run: make k8s-validate

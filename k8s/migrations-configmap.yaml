@@ -1,0 +1,202 @@
+# Versioned schema migrations. Files are mounted read-only into the migration
+# CronJob. Every migration must be idempotent: a retry after a partial failure
+# re-applies the same statements before recording the version.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: schema-migrations
+  namespace: codearena
+data:
+  postgres-run.sh: |
+    #!/bin/sh
+    # Applies every versioned Postgres migration in one transaction so that the
+    # DDL and its tracking row are committed together. A transaction-scoped
+    # advisory lock serialises concurrent migration Jobs.
+    set -eu
+
+    : "${POSTGRES_DSN:?POSTGRES_DSN is required}"
+    MIGRATIONS_DIR="${MIGRATIONS_DIR:-/migrations}"
+    ADVISORY_LOCK_KEY=724105133
+
+    plan="$(mktemp)"
+    trap 'rm -f "$plan"' EXIT
+
+    {
+      echo "BEGIN;"
+      echo "SELECT pg_advisory_xact_lock($ADVISORY_LOCK_KEY);"
+      echo "CREATE TABLE IF NOT EXISTS infra_schema_migrations ("
+      echo "  version INT PRIMARY KEY,"
+      echo "  name TEXT NOT NULL,"
+      echo "  checksum TEXT NOT NULL,"
+      echo "  applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
+      echo ");"
+
+      for file in "$MIGRATIONS_DIR"/postgres-V*.sql; do
+        if [ ! -f "$file" ]; then
+          echo "no Postgres migrations found in $MIGRATIONS_DIR" >&2
+          exit 1
+        fi
+        base="$(basename "$file")"
+        version="$(printf '%s' "$base" | sed -E 's/^postgres-V([0-9]+)-.*/\1/')"
+        name="$(printf '%s' "$base" | sed -E 's/^postgres-V[0-9]+-(.*)\.sql$/\1/' | tr '-' ' ')"
+        checksum="$(sha256sum "$file" | awk '{print $1}')"
+
+        # Refuse to re-run a version whose file changed after it was recorded.
+        echo "DO \$\$"
+        echo "BEGIN"
+        echo "  IF EXISTS (SELECT 1 FROM infra_schema_migrations WHERE version = ${version} AND checksum <> '${checksum}') THEN"
+        echo "    RAISE EXCEPTION 'migration ${version} checksum mismatch; refusing to apply modified migration';"
+        echo "  END IF;"
+        echo "END"
+        echo "\$\$;"
+        echo "\\i ${file}"
+        echo "INSERT INTO infra_schema_migrations (version, name, checksum)"
+        echo "VALUES (${version}, '${name}', '${checksum}')"
+        echo "ON CONFLICT (version) DO NOTHING;"
+      done
+
+      echo "COMMIT;"
+    } > "$plan"
+
+    psql -v ON_ERROR_STOP=1 --no-psqlrc "$POSTGRES_DSN" -f "$plan"
+
+  postgres-V001-core-schema.sql: |
+    -- Source: codearena-platform/internal/competition/db/postgres/migrations.go v1.
+    CREATE TABLE IF NOT EXISTS bots (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      avatar_url TEXT,
+      rating FLOAT DEFAULT 1200,
+      matches INT DEFAULT 0,
+      wins INT DEFAULT 0,
+      created_at BIGINT
+    );
+    CREATE TABLE IF NOT EXISTS scores (
+      id SERIAL PRIMARY KEY,
+      match_id TEXT NOT NULL,
+      participant_id TEXT NOT NULL,
+      points INT DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS tournaments (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL,
+      status TEXT NOT NULL,
+      description TEXT,
+      config JSONB,
+      created_at BIGINT
+    );
+    CREATE TABLE IF NOT EXISTS brackets (
+      id TEXT PRIMARY KEY,
+      tournament_id TEXT NOT NULL REFERENCES tournaments(id),
+      level INT,
+      match_id TEXT,
+      position INT
+    );
+    CREATE TABLE IF NOT EXISTS leagues (
+      id TEXT PRIMARY KEY,
+      tournament_id TEXT NOT NULL REFERENCES tournaments(id),
+      season TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS divisions (
+      id TEXT PRIMARY KEY,
+      league_id TEXT NOT NULL REFERENCES leagues(id),
+      name TEXT NOT NULL,
+      capacity INT,
+      promotion_slots INT,
+      relegation_slots INT
+    );
+    CREATE TABLE IF NOT EXISTS standings (
+      division_id TEXT NOT NULL REFERENCES divisions(id),
+      bot_id TEXT NOT NULL REFERENCES bots(id),
+      points INT DEFAULT 0,
+      wins INT DEFAULT 0,
+      draws INT DEFAULT 0,
+      losses INT DEFAULT 0,
+      matches INT DEFAULT 0,
+      dano_causado FLOAT DEFAULT 0,
+      PRIMARY KEY (division_id, bot_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_scores_match_id ON scores(match_id);
+    CREATE INDEX IF NOT EXISTS idx_brackets_tournament_id ON brackets(tournament_id);
+    CREATE INDEX IF NOT EXISTS idx_leagues_tournament_id ON leagues(tournament_id);
+    CREATE INDEX IF NOT EXISTS idx_divisions_league_id ON divisions(league_id);
+
+  postgres-V002-hubs-and-tournament-scoping.sql: |
+    -- Source: codearena-platform/internal/competition/db/postgres/migrations.go v2.
+    CREATE TABLE IF NOT EXISTS hubs (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL,
+      visibility TEXT NOT NULL,
+      owner_id TEXT NOT NULL,
+      description TEXT,
+      created_at BIGINT
+    );
+    CREATE TABLE IF NOT EXISTS hub_memberships (
+      hub_id TEXT NOT NULL REFERENCES hubs(id),
+      user_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      joined_at BIGINT,
+      PRIMARY KEY (hub_id, user_id)
+    );
+    ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS hub_id TEXT;
+    CREATE INDEX IF NOT EXISTS idx_tournaments_hub_id ON tournaments(hub_id);
+    CREATE INDEX IF NOT EXISTS idx_hub_memberships_user_id ON hub_memberships(user_id);
+
+  mongo-001-indexes.js: |
+    // MongoDB runs as a standalone chart, so multi-document transactions are
+    // unavailable. Index creation is idempotent and the tracking row is written
+    // only after every createIndex call succeeds; a retry is therefore safe.
+    function migrationChecksum(value) {
+      let hash = 0x811c9dc5; // FNV-1a 32-bit
+      const text = JSON.stringify(value);
+      for (let i = 0; i < text.length; i++) {
+        hash ^= text.charCodeAt(i);
+        hash = Math.imul(hash, 0x01000193) >>> 0;
+      }
+      return hash.toString(16).padStart(8, "0");
+    }
+
+    const migrations = [
+      {
+        version: 1,
+        name: "competition and iam lookup indexes",
+        indexes: [
+          { db: "codearena", collection: "matches", name: "idx_matches_id", keys: { id: 1 }, options: { unique: true } },
+          { db: "codearena", collection: "matches", name: "idx_matches_status_ended_at", keys: { status: 1, ended_at: -1 }, options: {} },
+          { db: "codearena", collection: "matches", name: "idx_matches_tournament_id", keys: { tournament_id: 1 }, options: {} },
+          { db: "codearena", collection: "matches", name: "idx_matches_participants", keys: { participants: 1 }, options: {} },
+          { db: "iam", collection: "users", name: "idx_users_id", keys: { id: 1 }, options: { unique: true } },
+          { db: "iam", collection: "users", name: "idx_users_email", keys: { email: 1 }, options: {} },
+          { db: "iam", collection: "users", name: "idx_users_project_id", keys: { project_id: 1 }, options: {} },
+          { db: "iam", collection: "clients", name: "idx_clients_id", keys: { id: 1 }, options: { unique: true } },
+          { db: "iam", collection: "clients", name: "idx_clients_service_account_email", keys: { service_account_email: 1 }, options: {} },
+          { db: "iam", collection: "clients", name: "idx_clients_linked_user_id", keys: { linked_user_id: 1 }, options: {} }
+        ]
+      }
+    ];
+
+    const tracker = db.getSiblingDB("codearena").getCollection("infra_schema_migrations");
+
+    for (const migration of migrations) {
+      const checksum = migrationChecksum(migration.indexes);
+      const previous = tracker.findOne({ _id: migration.version });
+      if (previous && previous.checksum !== checksum) {
+        throw new Error("migration " + migration.version + " checksum mismatch; refusing to apply modified indexes");
+      }
+
+      for (const index of migration.indexes) {
+        const options = Object.assign({ name: index.name }, index.options);
+        db.getSiblingDB(index.db).getCollection(index.collection).createIndex(index.keys, options);
+      }
+
+      tracker.updateOne(
+        { _id: migration.version },
+        { $setOnInsert: { name: migration.name, checksum: checksum, applied_at: new Date() } },
+        { upsert: true }
+      );
+      print("Applied MongoDB migration " + migration.version + " (" + migration.name + ")");
+    }
