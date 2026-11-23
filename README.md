@@ -11,6 +11,7 @@ Infrastructure as code and Kubernetes manifests for the CodeArena platform.
 - `scripts/check_migrations.py`: static checks CI runs against the migration manifests.
 - `docs/backup-runbook.md`: backup verification, off-cluster configuration and full restore procedure.
 - `docs/oncall-runbook.md`: alert routing, dashboards, log queries and incident response steps.
+- `docs/production-rollout.md`: ordered production gates, exit criteria and rollback.
 
 ## Prerequisites
 
@@ -38,6 +39,8 @@ make tf-plan   # review the infrastructure changes
 make tf-apply          # create the namespace, datastores, Secret and Ingress
 make k8s-apply         # render immutable image refs, deploy apps/policies/migrations/backup
 make migrations-check  # validate migration invariants locally
+make backup-check      # validate backup completeness and restore docs
+make production-check  # verify rollout inputs, runbooks and issue traceability
 make k8s-migrate       # run the versioned migration Job and wait for completion
 make k8s-validate
 make k8s-delete
@@ -345,6 +348,17 @@ including the Core SQLite PVC and off-cluster downloads, see
 - **Retention:** 7 daily copies on the in-cluster backup PVC, plus the lifecycle retention configured on the S3-compatible target. Perform a restore drill at least monthly.
 - Configure `var.backup_s3` (or the `codearena-backup-s3` Secret) before relying on backups for regional disaster recovery; without it, copies stay on the same cluster as the datastores.
 
+## Production rollout
+
+[docs/production-rollout.md](docs/production-rollout.md) turns the remaining
+operational work into five gates: encrypted Terraform backend, platform
+rollout, off-cluster backups, alert delivery and a real restore drill. Each
+gate has an exit criterion and a rollback path. Copy
+`terraform/production.tfvars.example` to a gitignored `production.tfvars` and
+replace every `REPLACE_WITH_*` value before applying. The file includes all
+sensitive inputs; use the encrypted remote backend described above whenever it
+is present.
+
 ## Monitoring and on-call
 
 `terraform/monitoring.tf` installs pinned Helm releases for
@@ -364,7 +378,8 @@ assumptions and the incident response steps.
 
 ## Remaining work
 
-- Provision the S3 bucket, KMS key and DynamoDB lock table referenced by `terraform/backend.hcl.example` and grant the Terraform role access. The encrypted backend configuration is included; the cloud resources are environment-specific.
-- Enable "Allow GitHub Actions to create and approve pull requests" at the organization level, then restore automatic PR creation in `.github/workflows/images.yml` and remove the manual step from [Images and promotion](#images-and-promotion).
-- Provision the S3-compatible bucket/credentials used by `var.backup_s3`; the uploader is optional until they exist.
-- Supply real Slack/PagerDuty destinations via `alert_slack_webhook_url` and `alert_pagerduty_routing_key` so alerts are delivered off-cluster.
+- Provision the S3 bucket, KMS key and DynamoDB lock table referenced by `terraform/backend.hcl.example` and grant the Terraform role access (infra#20). The encrypted backend configuration is included; the cloud resources are environment-specific.
+- Decide whether to enable "Allow GitHub Actions to create and approve pull requests" (`.github#2`); the manual digest promotion works either way.
+- Provision the S3-compatible bucket/credentials used by `var.backup_s3` (infra#21); the uploader is optional until they exist.
+- Supply real Slack/PagerDuty destinations via `alert_slack_webhook_url` and `alert_pagerduty_routing_key` so alerts are delivered off-cluster (infra#22).
+- Run a real restore drill and record the measured RTO/RPO (infra#23). See [docs/production-rollout.md](docs/production-rollout.md) for the full gate sequence.

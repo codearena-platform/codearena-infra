@@ -1,0 +1,47 @@
+# Copy to terraform/production.tfvars (gitignored) and replace every
+# REPLACE_WITH_* value. Never commit the filled-in file.
+#
+# Sensitive values (backup_s3, alert_slack_webhook_url,
+# alert_pagerduty_routing_key) also end up in Terraform state, so the encrypted
+# S3 backend described in README.md is mandatory for production.
+
+namespace                  = "codearena"
+environment                = "prod"
+ingress_host               = "REPLACE_WITH_PUBLIC_HOSTNAME"
+ingress_tls_secret_name    = "REPLACE_WITH_TLS_SECRET"
+ingress_class_name         = "nginx"
+storage_class              = "REPLACE_WITH_STORAGE_CLASS"
+postgres_pvc_size          = "20Gi"
+mongodb_pvc_size           = "20Gi"
+redis_pvc_size             = "10Gi"
+ws_allowed_origins         = "https://REPLACE_WITH_PUBLIC_HOSTNAME"
+kube_config_path           = null # use OIDC or in-cluster credentials in CI
+
+# Off-cluster backups. Use endpoint = "" for AWS S3.
+backup_s3 = {
+  endpoint   = "REPLACE_WITH_S3_ENDPOINT_OR_EMPTY"
+  bucket     = "REPLACE_WITH_BACKUP_BUCKET"
+  region     = "us-east-1"
+  prefix     = "prod"
+  access_key = "REPLACE_WITH_BACKUP_ACCESS_KEY"
+  secret_key = "REPLACE_WITH_BACKUP_SECRET_KEY"
+}
+
+# Centralized logs and metrics.
+log_retention_period        = "168h"
+metrics_pvc_size            = "20Gi"
+log_pvc_size                = "20Gi"
+ingress_controller_namespace = "ingress-nginx"
+
+# Alert delivery. Leave empty only for a staging smoke test.
+alert_slack_channel         = "codearena-alerts"
+alert_slack_webhook_url     = "REPLACE_WITH_SLACK_WEBHOOK_URL"
+alert_pagerduty_routing_key = "REPLACE_WITH_PAGERDUTY_ROUTING_KEY"
+
+# Pin these explicitly so an upstream chart major bump cannot change a release.
+kube_prometheus_stack_version = "70.0.0"
+loki_version                  = "5.48.0"
+promtail_version              = "6.17.1"
+postgres_exporter_version     = "8.3.0"
+mongodb_exporter_version      = "3.23.2"
+redis_exporter_version        = "6.38.0"
