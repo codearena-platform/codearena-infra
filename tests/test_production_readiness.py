@@ -20,6 +20,7 @@ FILES = (
     "k8s/images.env",
     "README.md",
     "Makefile",
+    ".dockerignore",
     ".github/workflows/validate.yml",
     ".github/workflows/images.yml",
 )
@@ -78,6 +79,14 @@ class ProductionReadinessTest(unittest.TestCase):
             replace(root, ".github/workflows/validate.yml", "make production-check", "true")
             errors = check(root)
             self.assertTrue(any("validate.yml is missing: make production-check" in e for e in errors), errors)
+
+    def test_detects_missing_dockerignore(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fixture(root)
+            (root / ".dockerignore").unlink()
+            errors = check(root)
+            self.assertTrue(any("nested .git directories" in e for e in errors), errors)
 
 
 if __name__ == "__main__":

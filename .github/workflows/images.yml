@@ -4,8 +4,8 @@ on:
   push:
     branches: [main]
     tags: ['v*']
-    # A digest PR only changes this file. Rebuilding in response would create
-    # new labels and therefore new digests, causing an endless promotion loop.
+    # A digest PR only changes this file. Rebuilding it would publish a new
+    # manifest and keep the promotion branch moving forever.
     paths-ignore:
       - 'k8s/images.env'
   pull_request:
@@ -22,10 +22,10 @@ jobs:
   images:
     runs-on: ubuntu-latest
     steps:
-      # OCI labels from metadata-action embed the infrastructure commit SHA and
-      # would change every image digest on unrelated infra commits, creating an
-      # endless digest PR cycle. Tags remain for traceability; registry tags are
-      # not part of the image manifest and therefore do not change the digest.
+      # OCI labels with commit SHAs, floating base-image tags and VCS stamping
+      # all change the manifest digest without changing application code. The
+      # Dockerfiles pin bases/packages and use -buildvcs=false; tags remain for
+      # traceability because registry tags are not part of the manifest.
       - name: Checkout infrastructure
         uses: actions/checkout@v4
 
