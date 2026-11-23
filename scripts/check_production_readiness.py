@@ -133,6 +133,8 @@ def check(root: Path) -> list[str]:
         errors.append("images.yml still attaches commit-derived OCI labels")
     if workflow.count("provenance: false") < 4:
         errors.append("images.yml must disable provenance for all four image builds")
+    if not re.search(r"^\s+workflow_dispatch:\s*$", workflow, re.MULTILINE):
+        errors.append("images.yml must allow manual rebuilds via workflow_dispatch")
 
     return errors
 

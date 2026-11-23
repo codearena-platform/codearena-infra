@@ -96,6 +96,14 @@ class ProductionReadinessTest(unittest.TestCase):
             errors = check(root)
             self.assertTrue(any("disable provenance" in e for e in errors), errors)
 
+    def test_detects_missing_manual_rebuild(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fixture(root)
+            replace(root, ".github/workflows/images.yml", "  workflow_dispatch:", "  workflow_dispatch_disabled:")
+            errors = check(root)
+            self.assertTrue(any("manual rebuilds" in e for e in errors), errors)
+
 
 if __name__ == "__main__":
     unittest.main()

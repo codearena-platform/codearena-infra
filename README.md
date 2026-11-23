@@ -148,6 +148,11 @@ measures, rebuilding unchanged source produces new digests and the promotion
 branch never settles. Registry tags still identify the source commit; they are
 not part of the image manifest and do not change its digest.
 
+Use **Run workflow** on the `Build and publish service images` workflow to
+rebuild from the current `main` on demand. After merging a digest-only PR, the
+run summary must say `Image digests are already current` and no new promotion
+PR should be needed. This is the acceptance test for reproducible builds.
+
 Source manifests reference `${GATEWAY_IMAGE}`, `${IAM_IMAGE}`,
 `${COMPETITION_IMAGE}` and `${CORE_IMAGE}`. `make k8s-render` writes resolved
 YAML to `.rendered/k8s/`; `make k8s-apply` and `make k8s-validate` do this
