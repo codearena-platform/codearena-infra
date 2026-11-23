@@ -9,6 +9,9 @@ on:
     paths-ignore:
       - 'k8s/images.env'
   pull_request:
+  # Allows an on-demand rebuild from main to verify that digests are stable
+  # after a digest-only promotion (which push paths-ignore does not trigger).
+  workflow_dispatch:
 
 permissions:
   contents: write
