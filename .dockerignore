@@ -1,0 +1,16 @@
+# The platform build context is this repository root, which also contains the
+# checked-out platform/core sources. Keep metadata and generated artifacts out
+# of the context so the resulting image digest depends only on source files.
+**/.git
+**/.gitignore
+**/.github
+**/.next
+**/.turbo
+**/node_modules
+**/dist
+**/build
+**/.pytest_cache
+**/__pycache__
+**/.terraform
+**/*.tfstate
+.rendered

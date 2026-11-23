@@ -106,9 +106,15 @@ def check(root: Path) -> list[str]:
         "docs/backup-runbook.md",
         "docs/oncall-runbook.md",
         "production.tfvars.example",
+        "pin their base images",
+        "-buildvcs=false",
     ):
         if needle not in readme:
             errors.append(f"README.md is missing: {needle}")
+
+    dockerignore = read(root, ".dockerignore")
+    if "**/.git" not in dockerignore:
+        errors.append(".dockerignore must exclude nested .git directories")
 
     makefile = read(root, "Makefile")
     if not re.search(r"^production-check:\s*$", makefile, re.MULTILINE):
