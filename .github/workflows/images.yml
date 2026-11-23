@@ -22,9 +22,10 @@ jobs:
   images:
     runs-on: ubuntu-latest
     steps:
-      # OCI labels with commit SHAs, floating base-image tags and VCS stamping
-      # all change the manifest digest without changing application code. The
-      # Dockerfiles pin bases/packages and use -buildvcs=false; tags remain for
+      # OCI labels with commit SHAs, floating base-image tags, VCS stamping and
+      # Buildx provenance attestations all change the manifest digest without
+      # changing application code. The Dockerfiles pin bases/packages and use
+      # -buildvcs=false, and provenance is disabled below. Tags remain for
       # traceability because registry tags are not part of the manifest.
       - name: Checkout infrastructure
         uses: actions/checkout@v4
@@ -68,6 +69,9 @@ jobs:
           context: .
           file: codearena-platform/Dockerfile.gateway
           push: ${{ github.event_name != 'pull_request' }}
+          # Buildx otherwise adds a provenance attestation whose builder-id
+          # contains the run/attempt URL, changing the digest on every build.
+          provenance: false
           tags: ${{ steps.gateway-meta.outputs.tags }}
           cache-from: type=gha,scope=gateway
           cache-to: type=gha,mode=max,scope=gateway
@@ -88,6 +92,9 @@ jobs:
           context: .
           file: codearena-platform/Dockerfile.iam
           push: ${{ github.event_name != 'pull_request' }}
+          # Buildx otherwise adds a provenance attestation whose builder-id
+          # contains the run/attempt URL, changing the digest on every build.
+          provenance: false
           tags: ${{ steps.iam-meta.outputs.tags }}
           cache-from: type=gha,scope=iam
           cache-to: type=gha,mode=max,scope=iam
@@ -108,6 +115,9 @@ jobs:
           context: .
           file: codearena-platform/Dockerfile.competition
           push: ${{ github.event_name != 'pull_request' }}
+          # Buildx otherwise adds a provenance attestation whose builder-id
+          # contains the run/attempt URL, changing the digest on every build.
+          provenance: false
           tags: ${{ steps.competition-meta.outputs.tags }}
           cache-from: type=gha,scope=competition
           cache-to: type=gha,mode=max,scope=competition
@@ -128,6 +138,9 @@ jobs:
           context: codearena-core
           file: codearena-core/Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
+          # Buildx otherwise adds a provenance attestation whose builder-id
+          # contains the run/attempt URL, changing the digest on every build.
+          provenance: false
           tags: ${{ steps.core-meta.outputs.tags }}
           cache-from: type=gha,scope=core
           cache-to: type=gha,mode=max,scope=core

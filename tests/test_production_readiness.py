@@ -88,6 +88,14 @@ class ProductionReadinessTest(unittest.TestCase):
             errors = check(root)
             self.assertTrue(any("nested .git directories" in e for e in errors), errors)
 
+    def test_detects_enabled_provenance(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fixture(root)
+            replace(root, ".github/workflows/images.yml", "provenance: false", "provenance: true")
+            errors = check(root)
+            self.assertTrue(any("disable provenance" in e for e in errors), errors)
+
 
 if __name__ == "__main__":
     unittest.main()

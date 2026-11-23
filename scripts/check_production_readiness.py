@@ -131,6 +131,8 @@ def check(root: Path) -> list[str]:
             errors.append(f".github/workflows/images.yml is missing: {needle}")
     if re.search(r"^\s+labels:\s*\$\{\{", workflow, re.MULTILINE):
         errors.append("images.yml still attaches commit-derived OCI labels")
+    if workflow.count("provenance: false") < 4:
+        errors.append("images.yml must disable provenance for all four image builds")
 
     return errors
 
