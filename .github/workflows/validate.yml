@@ -38,5 +38,9 @@ jobs:
         run: make migrations-check
       - name: Check backup manifests
         run: make backup-check
+      - name: Check production readiness
+        run: make production-check
+      - name: Check monitoring manifests
+        run: python3 scripts/check_monitoring.py
       - name: Validate rendered Kubernetes manifests
         run: make k8s-validate
